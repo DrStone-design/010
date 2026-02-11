@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BSC 最简 DeFi 存款 DApp - USDT</title>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            max-width: 400px; 
+            margin: auto; 
+            background: #f5f5f5; 
+        }
+        h1 { color: #1e88e5; }
+        input, button { 
+            width: 100%; 
+            padding: 12px; 
+            margin: 10px 0; 
+            border-radius: 6px; 
+            border: 1px solid #ccc; 
+            box-sizing: border-box;
+        }
+        button { 
+            background: #1e88e5; 
+            color: white; 
+            border: none; 
+            font-weight: bold; 
+            cursor: pointer; 
+        }
+        button:hover { background: #1565c0; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+        #status { 
+            color: #d32f2f; 
+            margin-top: 10px; 
+            min-height: 40px; 
+            word-break: break-all;
+        }
+        .info { color: #555; font-size: 0.9em; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>BSC 最简存款协议（USDT）</h1>
+    <p class="info">请在 TokenPocket “发现”中打开<br>确保钱包已切换到 BSC 网络（链ID: 56）</p>
+
+    <button id="connectBtn">连接钱包</button>
+    <p>当前地址: <span id="account">-</span></p>
+
+    <input type="text" id="amount" placeholder="输入存款数量（例如 100）" />
+    
+    <button id="approveBtn" disabled>1. 授权合约（Approve）</button>
+    <button id="depositBtn" disabled>2. 存款（Deposit）</button>
+
+    <p id="status">-</p>
+
+    <script>
+        // BSC 配置
+        const CHAIN_ID = 56;
+        const TOKEN_ADDRESS = "0x55d398326f99059fF775485246999027B3197955";  // USDT on BSC
+        const CONTRACT_ADDRESS = "0x8e01632dae54Ca7Dc86696ee577Cf0127dfDD941";  // 需要授权的合约地址
+
+        // ERC20 ABI（最小）
+        const ERC20_ABI = [
+            "function approve(address spender, uint256 amount) external returns (bool)",
+            "function allowance(address owner, address spender) external view returns (uint256)",
+            "function balanceOf(address account) external view returns (uint256)"
+        ];
+
+        // 存款合约 ABI
+        const CONTRACT_ABI = [
+            "function deposit(uint256 amount) external"
+        ];
+
+        let provider;
+        let signer;
+        let account;
+        let tokenContract;
+        let defiContract;
+
+        const connectBtn = document.getElementById("connectBtn");
+        const approveBtn = document.getElementById("approveBtn");
+        const depositBtn = document.getElementById("depositBtn");
+        const statusEl = document.getElementById("status");
+        const accountEl = document.getElementById("account");
+
+        // 检查 ethers 是否加载成功
+        if (typeof ethers === 'undefined') {
+            statusEl.innerText = "ethers.js 加载失败，请刷新页面或检查网络";
+            alert("ethers.js 加载失败");
+        }
+
+        // 连接钱包
+        connectBtn.onclick = async () => {
+            if (!window.ethereum) {
+                alert("请在 TokenPocket 钱包的浏览器中打开此页面");
+                statusEl.innerText = "未检测到钱包提供者";
+                return;
+            }
+
+            try {
+                statusEl.innerText = "正在连接...";
+
+                provider = new ethers.BrowserProvider(window.ethereum);
+
+                // 尝试切换到 BSC
+                try {
+                    await window.ethereum.request({
+                        method: "wallet_switchEthereumChain",
+                        params: [{ chainId: "0x38" }],
+                    });
+                } catch (switchError) {
+                    if (switchError.code === 4902) {
+                        await window.ethereum.request({
+                            method: "wallet_addEthereumChain",
+                            params: [{
+                                chainId: "0x38",
+                                chainName: "Binance Smart Chain",
+                                nativeCurrency: {
+                                    name: "BNB",
+                                    symbol: "BNB",
+                                    decimals: 18
+                                },
+                                rpcUrls: ["https://bsc-dataseed.binance.org/"],
+                                blockExplorerUrls: ["https://bscscan.com"]
+                            }]
+                        });
+                    } else {
+                        throw switchError;
+                    }
+                }
+
+                const accounts = await provider.send("eth_requestAccounts", []);
+                account = accounts[0];
+
+                signer = await provider.getSigner();
+                account = await signer.getAddress();
+
+                accountEl.innerText = account;
+                statusEl.innerText = "连接成功！";
+
+                tokenContract = new ethers.Contract(, ERC20_ABI, signer);
+                defiContract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+                approveBtn.disabled = false;
+                depositBtn.disabled = false;
+                connectBtn.disabled = true;
+
+            } catch (err) {
+                console.error(err);
+                statusEl.innerText = "连接失败： " + (err.message || err.reason || "未知错误");
+            }
+        };
+
+        approveBtn.onclick = async () => {
+            const input = document.getElementById("amount").value.trim();
+            if (!input || isNaN(input) || Number(input) <= 0) {
+                alert("请输入有效的正数金额");
+                return;
+            }
+
+            try {
+                statusEl.innerText = "正在授权 USDT...";
+                approveBtn.disabled = true;
+
+                const amount = ethers.parseUnits(input, 18);
+
+                const tx = await tokenContract.approve(CONTRACT_ADDRESS, amount);
+                statusEl.innerText = `授权交易已发送： ${tx.hash}\n请在钱包确认授权`;
+
+                await tx.wait();
+                statusEl.innerText = "USDT 授权成功！现在可以存款";
+
+            } catch (err) {
+                console.error(err);
+                statusEl.innerText = "授权失败：\n" + (err.reason || err.message || err.code || JSON.stringify(err));
+                approveBtn.disabled = false;
+            }
+        };
+
+        // 存款
+        depositBtn.onclick = async () => {
+            const input = document.getElementById("amount").value.trim();
+            if (!input || isNaN(input) || Number(input) <= 0) {
+                alert("请输入有效的正数金额");
+                return;
+            }
+
+            try {
+                statusEl.innerText = "正在存款 USDT...";
+                depositBtn.disabled = true;
+
+                const amount = ethers.parseUnits(input, 18);
+
+                const tx = await defiContract.deposit(amount);
+                statusEl.innerText = `存款交易已发送： ${tx.hash}\n请在钱包确认`;
+
+                await tx.wait();
+                statusEl.innerText = "USDT 存款成功！";
+
+            } catch (err) {
+                console.error(err);
+                statusEl.innerText = "存款失败：\n" + (err.reason || err.message || err.code || JSON.stringify(err));
+                depositBtn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>
